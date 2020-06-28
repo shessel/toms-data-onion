@@ -57,6 +57,11 @@ fn decode_ascii85(input: &str) -> String {
     decoded
 }
 
+fn decode_flip_and_shift(input: &[u8]) -> Vec<u8> {
+    input.iter().map(|b| (b ^ 0b01010101).rotate_right(1))
+        .collect()
+}
+
 fn decode_onion_0() {
     let raw_input = read_input_file("data/onion0.txt");
     let payload = find_payload(&raw_input);
@@ -65,6 +70,16 @@ fn decode_onion_0() {
     write_output_file("data/onion1.txt", decoded.as_bytes());
 }
 
+fn decode_onion_1() {
+    let raw_input = read_input_file("data/onion1.txt");
+    let payload = find_payload(&raw_input);
+    let payload = clean_payload(payload);
+    let decoded = decode_ascii85(&payload);
+    let decoded = decode_flip_and_shift(&decoded.as_bytes());
+    write_output_file("data/onion2.txt", decoded.as_slice());
+}
+
 fn main() {
     decode_onion_0();
+    decode_onion_1();
 }
