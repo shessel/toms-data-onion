@@ -58,7 +58,33 @@ fn decode_ascii85(input: &str) -> String {
 }
 
 fn decode_flip_and_shift(input: &[u8]) -> Vec<u8> {
-    input.iter().map(|b| (b ^ 0b01010101).rotate_right(1))
+    input.iter().map(|b| (b ^ 0b01010101u8).rotate_right(1))
+        .collect()
+}
+
+fn decode_parity_bit(input: &[u8]) -> Vec<u8> {
+    let mut accumulator = 0u8;
+    let mut num_bits_in_accumulator = 0u8;
+    input.iter()
+        .filter_map(|b| {
+            let parity = b & 0b1u8;
+            let data = b & 0b11111110u8;
+            if parity == (data.count_ones() as u8 & 0b1u8) {
+                if num_bits_in_accumulator > 0 {
+                    let num_bits_used_for_next_byte = (8u8 - num_bits_in_accumulator) % 8u8;
+                    let next_byte = accumulator | (data >> num_bits_in_accumulator);
+                    num_bits_in_accumulator = 7u8 - num_bits_used_for_next_byte;
+                    accumulator = data << num_bits_used_for_next_byte;
+                    Some(next_byte)
+                } else {
+                    num_bits_in_accumulator = 7u8;
+                    accumulator = data;
+                    None
+                }
+            } else {
+                None
+            }
+        })
         .collect()
 }
 
@@ -75,11 +101,21 @@ fn decode_onion_1() {
     let payload = find_payload(&raw_input);
     let payload = clean_payload(payload);
     let decoded = decode_ascii85(&payload);
-    let decoded = decode_flip_and_shift(&decoded.as_bytes());
+    let decoded = decode_flip_and_shift(decoded.as_bytes());
     write_output_file("data/onion2.txt", decoded.as_slice());
+}
+
+fn decode_onion_2() {
+    let raw_input = read_input_file("data/onion2.txt");
+    let payload = find_payload(&raw_input);
+    let payload = clean_payload(payload);
+    let decoded = decode_ascii85(&payload);
+    let decoded = decode_parity_bit(decoded.as_bytes());
+    write_output_file("data/onion3.txt", decoded.as_slice());
 }
 
 fn main() {
     decode_onion_0();
     decode_onion_1();
+    decode_onion_2();
 }
