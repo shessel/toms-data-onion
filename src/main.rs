@@ -3,22 +3,22 @@ use std::fs::File;
 use std::io::prelude::*;
 use regex::Regex;
 
-fn find_payload(s: &str) -> Option<&str> {
-    let re = Regex::new("(?:.*<~)((?s).*)(?:~>.*)").expect("Failed to compile regex");
-    let cap = match re.captures(&s) {
+fn find_payload(string: &str) -> Option<&str> {
+    let ascii85_payload_regex = Regex::new("(?:.*<~)((?s).*)(?:~>.*)").expect("Failed to compile regex");
+    let captures = match ascii85_payload_regex.captures(&string) {
         Some(captures) => captures.get(1),
         None => panic!("Failed to match regex"),
     };
     
-    cap.map(|cap| unsafe { s.get_unchecked(cap.start()..cap.end())})
+    captures.map(|capture| unsafe { string.get_unchecked(capture.start()..capture.end())})
 }
 
 fn read_input_file(path: &str) -> String {
     let path = Path::new(path);
     let mut file = File::open(path).expect("Could not read file");
-    let mut s = String::new();
-    file.read_to_string(&mut s).expect("Failed to read file into string");
-    s
+    let mut content_string = String::new();
+    file.read_to_string(&mut content_string).expect("Failed to read file into string");
+    content_string
 }
 
 fn write_output_file(path: &str, data: &[u8]) {
@@ -58,7 +58,7 @@ fn decode_ascii85(input: &str) -> String {
 }
 
 fn decode_flip_and_shift(input: &[u8]) -> Vec<u8> {
-    input.iter().map(|b| (b ^ 0b01010101u8).rotate_right(1))
+    input.iter().map(|byte| (byte ^ 0b01010101u8).rotate_right(1))
         .collect()
 }
 
@@ -66,9 +66,9 @@ fn decode_parity_bit(input: &[u8]) -> Vec<u8> {
     let mut accumulator = 0u8;
     let mut num_bits_in_accumulator = 0u8;
     input.iter()
-        .filter_map(|b| {
-            let parity = b & 0b1u8;
-            let data = b & 0b11111110u8;
+        .filter_map(|byte| {
+            let parity = byte & 0b1u8;
+            let data = byte & 0b11111110u8;
             if parity == (data.count_ones() as u8 & 0b1u8) {
                 if num_bits_in_accumulator > 0 {
                     let num_bits_used_for_next_byte = (8u8 - num_bits_in_accumulator) % 8u8;
@@ -202,7 +202,7 @@ fn decode_onion_3() {
     let payload = clean_payload(payload);
     let decoded = decode_ascii85(&payload);
     let decoded = decode_unknown_32byte_xor(decoded.as_bytes());
-    write_output_file("data/onion4txt", decoded.as_slice());
+    write_output_file("data/onion4.txt", decoded.as_slice());
 }
 
 fn main() {
