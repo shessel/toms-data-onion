@@ -1,6 +1,9 @@
 use std::path::Path;
 use std::fs::File;
+use std::fmt::Debug;
 use std::io::prelude::*;
+use std::convert::TryInto;
+
 use regex::Regex;
 
 fn find_payload(string: &str) -> Option<&str> {
@@ -170,6 +173,125 @@ fn decode_unknown_32byte_xor(input: &[u8]) -> Vec<u8> {
     decode_32bit_xor_cyclic(input, &intermediate_key)
 }
 
+// only the parts that are necessary for layer 4
+#[derive(Debug)]
+struct IpHeader {
+    source: u32,
+    destination: u32,
+    valid: bool,
+}
+
+impl IpHeader {
+    pub fn from_bytes(bytes: &[u8]) -> IpHeader {
+        let source = u32::from_be_bytes(bytes[12..16].try_into()
+            .expect("not enough bytes to parse IP header"));
+        let destination = u32::from_be_bytes(bytes[16..20].try_into()
+            .expect("not enough bytes to parse IP header"));
+
+        let mut checksum = bytes.chunks(2)
+            .map(|chunk| {
+                u16::from_be_bytes(chunk.try_into()
+                    .expect("Couldn't convert to u16")) as u32
+            })
+            .fold(0u32, |lhs, rhs| lhs.wrapping_add(rhs));
+        
+        while checksum > 0xFFFF {
+            let upper = (checksum & 0xFFFF0000) >> 16;
+            let lower = checksum & 0xFFFF;
+            checksum = lower + upper;
+        }
+
+        let valid = checksum == 0xFFFF;
+        IpHeader {
+            source,
+            destination,
+            valid
+        }
+    }
+}
+
+#[derive(Debug)]
+struct UdpHeader {
+    source_port: u16,
+    destination_port: u16,
+    length: u16,
+}
+
+impl UdpHeader {
+    pub fn from_bytes(bytes: &[u8]) -> UdpHeader {
+        let source_port = u16::from_be_bytes(bytes[0..2].try_into()
+            .expect("not enough bytes to parse UDP header"));
+        let destination_port = u16::from_be_bytes(bytes[2..4].try_into()
+            .expect("not enough bytes to parse UDP header"));
+        let length = u16::from_be_bytes(bytes[4..6].try_into()
+            .expect("not enough bytes to parse UDP header"));
+
+        UdpHeader {
+            source_port,
+            destination_port,
+            length,
+        }
+    }
+}
+
+fn decode_udp_ip(input: &[u8]) -> Vec<u8> {
+    let mut byte_i = 0;
+    let mut decoded = Vec::new();
+    let expected_source = u32::from_be_bytes([10,1,1,10]);
+    let expected_destination = u32::from_be_bytes([10,1,1,200]);
+    while byte_i < input.len() {
+        let ip_header_bytes = &input[byte_i..byte_i + 20];
+        let ip_header = IpHeader::from_bytes(ip_header_bytes);
+        byte_i += 20;
+
+        let udp_header_bytes = &input[byte_i..byte_i + 8];
+        let udp_header = UdpHeader::from_bytes(udp_header_bytes);
+
+        let data = &input[byte_i..byte_i + udp_header.length as usize];
+
+        let mut udp_checksum = (ip_header.source >> 16) as u32
+            + (ip_header.source & 0xFFFF) as u32
+            + (ip_header.destination >> 16) as u32
+            + (ip_header.destination & 0xFFFF) as u32
+            + 17
+            + udp_header.length as u32;
+
+        udp_checksum = data.chunks(2)
+            .fold(udp_checksum, |sum, val| {
+                let mut val_u16 = 0u16;
+                for (i, &val) in val.iter().enumerate() {
+                    val_u16 += (val as u16) << (8 * (1-i));
+                }
+                sum + val_u16 as u32
+            });
+        
+        while udp_checksum > 0xFFFF {
+            let upper = (udp_checksum & 0xFFFF0000) >> 16;
+            let lower = udp_checksum & 0xFFFF;
+            udp_checksum = lower + upper;
+        }
+
+        let udp_valid = udp_checksum == 0xFFFF;
+
+        let good_package = ip_header.valid && udp_valid
+            && ip_header.source == expected_source
+            && ip_header.destination == expected_destination
+            && udp_header.destination_port == 42069;
+        
+        println!("{} {} {} {} {} {}", good_package, ip_header.valid, udp_valid
+        , ip_header.source == expected_source
+        , ip_header.destination == expected_destination
+        , udp_header.destination_port == 42069);
+        
+        if good_package {
+            decoded.extend_from_slice(&data[8..]);
+        }
+
+        byte_i += udp_header.length as usize;
+    }
+    decoded
+}
+
 fn decode_onion_0() {
     let raw_input = read_input_file("data/onion0.txt");
     let payload = find_payload(&raw_input).expect("Failed to find payload");
@@ -205,9 +327,19 @@ fn decode_onion_3() {
     write_output_file("data/onion4.txt", decoded.as_slice());
 }
 
+fn decode_onion_4() {
+    let raw_input = read_input_file("data/onion4.txt");
+    let payload = find_payload(&raw_input).expect("Failed to find payload");
+    let payload = clean_payload(payload);
+    let decoded = decode_ascii85(&payload);
+    let decoded = decode_udp_ip(decoded.as_bytes());
+    write_output_file("data/onion5.txt", decoded.as_slice());
+}
+
 fn main() {
     decode_onion_0();
     decode_onion_1();
     decode_onion_2();
     decode_onion_3();
+    decode_onion_4();
 }
