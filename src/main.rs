@@ -1,8 +1,11 @@
-use std::path::Path;
-use std::fs::File;
-use std::fmt::Debug;
-use std::io::prelude::*;
 use std::convert::TryInto;
+use std::fmt::Debug;
+use std::fs::File;
+use std::io::prelude::*;
+use std::path::Path;
+
+use openssl::aes::{AesKey, unwrap_key};
+use openssl::symm::{decrypt, Cipher};
 
 use regex::Regex;
 
@@ -278,11 +281,6 @@ fn decode_udp_ip(input: &[u8]) -> Vec<u8> {
             && ip_header.destination == expected_destination
             && udp_header.destination_port == 42069;
         
-        println!("{} {} {} {} {} {}", good_package, ip_header.valid, udp_valid
-        , ip_header.source == expected_source
-        , ip_header.destination == expected_destination
-        , udp_header.destination_port == 42069);
-        
         if good_package {
             decoded.extend_from_slice(&data[8..]);
         }
@@ -290,6 +288,24 @@ fn decode_udp_ip(input: &[u8]) -> Vec<u8> {
         byte_i += udp_header.length as usize;
     }
     decoded
+}
+
+fn decode_known_aes(input: &[u8]) -> Vec<u8> {
+    let kek_bytes = &input[..32];
+    let mut key_iv = [0u8; 8];
+    key_iv.clone_from_slice(&input[32..40]);
+    let key_enc = &input[40..80];
+
+    let kek = AesKey::new_decrypt(kek_bytes).unwrap();
+    let mut key_bytes = [0u8; 32];
+    unwrap_key(&kek, Some(key_iv), &mut key_bytes, &key_enc);
+
+    let mut enc_iv = [0u8; 16];
+    enc_iv.clone_from_slice(&input[80..96]);
+    let enc = &input[96..];
+
+    let cipher = Cipher::aes_256_cbc();
+    decrypt(cipher, &key_bytes, Some(&enc_iv), enc).unwrap()
 }
 
 fn decode_onion_0() {
@@ -336,10 +352,20 @@ fn decode_onion_4() {
     write_output_file("data/onion5.txt", decoded.as_slice());
 }
 
+fn decode_onion_5() {
+    let raw_input = read_input_file("data/onion5.txt");
+    let payload = find_payload(&raw_input).expect("Failed to find payload");
+    let payload = clean_payload(payload);
+    let decoded = decode_ascii85(&payload);
+    let decoded = decode_known_aes(decoded.as_bytes());
+    write_output_file("data/onion6.txt", decoded.as_slice());
+}
+
 fn main() {
     decode_onion_0();
     decode_onion_1();
     decode_onion_2();
     decode_onion_3();
     decode_onion_4();
+    decode_onion_5();
 }
